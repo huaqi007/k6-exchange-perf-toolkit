@@ -1,0 +1,12 @@
+[
+  {"symbol":"BTC-USDT", "minQty":0.00001, "maxQty":100,    "pricePrecision":2, "qtyPrecision":5},
+  {"symbol":"ETH-USDT", "minQty":0.0001,  "maxQty":500,    "pricePrecision":2, "qtyPrecision":4},
+  {"symbol":"SOL-USDT", "minQty":0.01,    "maxQty":10000,  "pricePrecision":3, "qtyPrecision":2},
+  {"symbol":"BNB-USDT", "minQty":0.001,   "maxQty":200,    "pricePrecision":2, "qtyPrecision":3},
+  {"symbol":"XRP-USDT", "minQty":0.1,     "maxQty":50000,  "pricePrecision":4, "qtyPrecision":1},
+  {"symbol":"ADA-USDT", "minQty":0.1,     "maxQty":100000, "pricePrecision":4, "qtyPrecision":1},
+  {"symbol":"DOGE-USDT","minQty":1,       "maxQty":500000, "pricePrecision":5, "qtyPrecision":0},
+  {"symbol":"DOT-USDT", "minQty":0.01,    "maxQty":10000,  "pricePrecision":3, "qtyPrecision":2},
+  {"symbol":"LINK-USDT","minQty":0.01,    "maxQty":5000,   "pricePrecision":3, "qtyPrecision":2},
+  {"symbol":"AVAX-USDT","minQty":0.01,    "maxQty":5000,   "pricePrecision":2, "qtyPrecision":2}
+]
