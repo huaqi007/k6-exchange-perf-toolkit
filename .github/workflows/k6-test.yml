@@ -28,50 +28,39 @@ jobs:
           curl -s http://localhost:8080/api/v1/health
           echo "Mock server ready"
 
-      - name: Run k6 - quick smoke test（无输出文件，看能不能跑）
-        continue-on-error: true
-        run: |
-          docker run --rm --network host \
-            -v ${{ github.workspace }}/dist:/app:ro \
-            grafana/k6:latest \
-            run /app/mixed-scenario-v2.js \
-            --duration 5s --vus 1 \
-            2>&1 | tail -40
-
       - name: Run k6 with summary
         continue-on-error: true
         run: |
+          # 创建独立输出目录，chmod 0777 解决容器写权限问题
+          mkdir -p k6-output
+          chmod 0777 k6-output
+
           docker run --rm --network host \
             -v ${{ github.workspace }}/dist:/app:ro \
-            -v ${{ github.workspace }}:/output \
+            -v ${{ github.workspace }}/k6-output:/output \
             -w /output \
             grafana/k6:latest \
             run /app/mixed-scenario-v2.js \
             --out json=/output/results.json \
-            --summary-export=/output/summary.json \
-            2>k6-stderr.log
-          echo "=== k6 stderr（前100行）==="
-          head -100 k6-stderr.log 2>/dev/null
+            --summary-export=/output/summary.json
+
           echo "=== 输出文件 ==="
-          ls -la results.json summary.json 2>/dev/null || echo "输出文件未生成"
+          ls -la k6-output/
 
       - name: Performance Gate（性能门禁）
         run: |
           # 防御：summary.json 不存在时给出清晰报错
-          if [ ! -f summary.json ]; then
-            echo "❌ summary.json 未生成 — k6 未能正常完成压测"
-            echo "可能原因：靶机不可达、脚本 init 阶段崩溃、或所有请求全部失败"
-            if [ -f results.json ]; then
-              echo "--- results.json 尾部内容（调试用）---"
-              tail -c 2000 results.json
-            else
-              echo "results.json 也不存在"
+          if [ ! -f k6-output/summary.json ]; then
+            echo "❌ k6-output/summary.json 未生成 — k6 未能正常完成压测"
+            if [ -f k6-output/results.json ]; then
+              echo "--- results.json 尾部 ---"
+              tail -c 2000 k6-output/results.json
             fi
             exit 1
           fi
 
-          P95=$(jq '.metrics.order_latency_ms["p(95)"]' summary.json)
-          ERROR=$(jq '.metrics.http_req_failed.values.rate' summary.json)
+          P95=$(jq '.metrics.order_latency_ms["p(95)"]' k6-output/summary.json)
+          ERROR=$(jq '.metrics.http_req_failed.values.rate' k6-output/summary.json)
           echo "P95(order) = ${P95}ms | HTTP Error Rate = ${ERROR}"
 
           if (( $(echo "$P95 > 800" | bc -l) )); then
