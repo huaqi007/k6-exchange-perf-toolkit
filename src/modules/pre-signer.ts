@@ -27,7 +27,11 @@ export interface PreSignedOrder {
 export const preSignedOrders = new SharedArray<PreSignedOrder>(
   'preSigned',
   (): PreSignedOrder[] => {
-    const orders = JSON.parse(open('./data/orders.json'));
+    // open() 路径支持环境变量覆盖，适配 k6-operator ConfigMap 挂载场景
+    // 本地/Docker 默认 ./data → 容器内 /app/data/（脚本在 /app/）
+    // K8s 设 DATA_PATH=/app/data → 使用镜像内预置数据
+    const DATA_PATH = __ENV.DATA_PATH || './data';
+    const orders = JSON.parse(open(`${DATA_PATH}/orders.json`));
     const startTime = Date.now();
 
     return orders.map((order: any, i: number) => {
@@ -48,7 +52,7 @@ export const preSignedOrders = new SharedArray<PreSignedOrder>(
 );
 
 // ============================================================================
-// 按交易对索引（init context 预计算）
+// 按交易对索引（init context 预计算）生成币符号映射对应索引数组
 // ============================================================================
 export const ordersBySymbol: Record<string, number[]> = (() => {
   const map: Record<string, number[]> = {};

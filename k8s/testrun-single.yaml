@@ -1,0 +1,31 @@
+apiVersion: k6.io/v1alpha1
+kind: TestRun
+metadata:
+  name: single-pod-test
+  namespace: k6-operator
+spec:
+  parallelism: 4
+  script:
+    configMap:
+      name: k6-test-scripts
+      file: mixed-scenario-v2.js       # ← 必须与 ConfigMap 中的 key 完全一致
+  runner:
+    image: k6-tests:multistage           # ← 自定义镜像（含预置数据）
+    env:
+      - name: BASE_URL
+        value: "http://host.docker.internal:8080"
+      - name: DATA_PATH                  # ← 告诉 open() 从镜像内读取数据
+        value: "/app/data"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1000m"
+
+
+
+
+
+

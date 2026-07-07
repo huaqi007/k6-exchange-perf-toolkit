@@ -36,7 +36,9 @@ export interface SymbolConfig {
 export const SYMBOLS_CONFIG = new SharedArray(
   'symbolsConfig',
   () => {
-    const raw = JSON.parse(open('./data/symbols.json'));
+    // open() 路径支持环境变量覆盖，适配 k6-operator ConfigMap 挂载场景
+    const DATA_PATH = __ENV.DATA_PATH || './data';
+    const raw = JSON.parse(open(`${DATA_PATH}/symbols.json`));
     return raw as SymbolConfig[];
   },
 ) as unknown as SymbolConfig[];

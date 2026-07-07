@@ -1,0 +1,16 @@
+# ── 阶段1：编译 TypeScript ──
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig.json webpack.config.js ./
+COPY src/ ./src/
+RUN npx webpack && cp -r src/data dist/data
+
+# ── 阶段2：运行 k6 ──
+FROM grafana/k6:latest
+WORKDIR /app
+# 只从阶段1复制 dist/（不含 node_modules）
+COPY --from=builder /app/dist/ /app/
+ENTRYPOINT ["k6"]
+CMD ["run", "/app/mixed-scenario-v2.js"]
