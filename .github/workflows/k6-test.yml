@@ -12,7 +12,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Build k6 script
         run: |
@@ -21,15 +21,35 @@ jobs:
           ls dist/mixed-scenario-v2.js    # 确认产物存在
           ls dist/data/symbols.json       # 确认数据文件也已复制
 
+      - name: Start mock server（后台运行）
+        run: |
+          node scripts/mock-server.js &
+          sleep 2                           # 等 mock 启动完毕
+          curl -s http://localhost:8080/api/v1/health
+          echo "Mock server ready"
+
       - name: Run k6 with summary
         uses: grafana/k6-action@v0.3.1
         continue-on-error: true            # k6 网络失败也不阻断，交给下一步门禁判断
         with:
           filename: ./dist/mixed-scenario-v2.js
           arguments: --out json=results.json --summary-export=summary.json
-      
+
       - name: Performance Gate（性能门禁）
         run: |
+          # 防御：summary.json 不存在时给出清晰报错
+          if [ ! -f summary.json ]; then
+            echo "❌ summary.json 未生成 — k6 未能正常完成压测"
+            echo "可能原因：靶机不可达、脚本 init 阶段崩溃、或所有请求全部失败"
+            if [ -f results.json ]; then
+              echo "--- results.json 尾部内容（调试用）---"
+              tail -c 2000 results.json
+            else
+              echo "results.json 也不存在"
+            fi
+            exit 1
+          fi
+
           P95=$(jq '.metrics.order_latency_ms["p(95)"]' summary.json)
           ERROR=$(jq '.metrics.http_req_failed.values.rate' summary.json)
           echo "P95(order) = ${P95}ms | HTTP Error Rate = ${ERROR}"
