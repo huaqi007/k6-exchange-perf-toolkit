@@ -63,9 +63,9 @@ export const options = {
   // ============================================================================
   thresholds: {
     // 下单延迟 P95 < 500ms，P99 < 1000ms
-    'order_latency_ms': ['p(95)<50', 'p(99)<1000'],
+    'order_latency_ms': ['p(95)<1', 'p(99)<1000'],
     // 行情延迟 P95 < 300ms
-    'ticker_latency_ms': ['p(95)<30'],
+    'ticker_latency_ms': ['p(95)<3'],
     // HTTP 协议层错误率 < 10%（允许 mock 5% 随机 500 + 重试缓冲）
     'http_req_failed': ['rate<0.10'],
     // 每秒至少完成 50 个请求（防止静默失败）
