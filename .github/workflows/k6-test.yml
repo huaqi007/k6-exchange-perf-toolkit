@@ -23,7 +23,7 @@ jobs:
       - name: Run k6 with summary
         uses: grafana/k6-action@v0.3.1
         with:
-          path: ./dist/mixed-scenario-v2.js
+          filename: ./dist/mixed-scenario-v2.js
           arguments: --out json=results.json --summary-export=summary.json
       
       - name: Performance Gate（性能门禁）
