@@ -28,19 +28,32 @@ jobs:
           curl -s http://localhost:8080/api/v1/health
           echo "Mock server ready"
 
-      - name: Run k6（直接 Docker，--network host 访问 mock）
+      - name: Run k6 - quick smoke test（无输出文件，看能不能跑）
         continue-on-error: true
         run: |
-          # dist 挂载到 /app，输出文件写到 workspace 根目录
           docker run --rm --network host \
-            -v ${{ github.workspace }}/dist:/app \
+            -v ${{ github.workspace }}/dist:/app:ro \
+            grafana/k6:latest \
+            run /app/mixed-scenario-v2.js \
+            --duration 5s --vus 1 \
+            2>&1 | tail -40
+
+      - name: Run k6 with summary
+        continue-on-error: true
+        run: |
+          docker run --rm --network host \
+            -v ${{ github.workspace }}/dist:/app:ro \
             -v ${{ github.workspace }}:/output \
             -w /output \
             grafana/k6:latest \
             run /app/mixed-scenario-v2.js \
             --out json=/output/results.json \
-            --summary-export=/output/summary.json
-          ls -la results.json summary.json 2>/dev/null || echo "k6 输出文件未生成"
+            --summary-export=/output/summary.json \
+            2>k6-stderr.log
+          echo "=== k6 stderr（前100行）==="
+          head -100 k6-stderr.log 2>/dev/null
+          echo "=== 输出文件 ==="
+          ls -la results.json summary.json 2>/dev/null || echo "输出文件未生成"
 
       - name: Performance Gate（性能门禁）
         run: |
