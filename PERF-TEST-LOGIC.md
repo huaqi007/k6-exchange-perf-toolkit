@@ -581,3 +581,149 @@ const RETRY_CONFIG = {
 ### 11.4 修改订单生成分布
 
 如需修改 `orders.json` 中各交易对的分布比例，重新生成该文件即可。当前 1000 条订单的 symbol 分布取决于 JSON 生成时的随机分布；实际压测时由 `weightedRandomSymbol()` 控制选择权重，不依赖 JSON 内的分布。
+
+---
+
+## 12. CI/CD 性能门禁
+
+### 12.1 门禁触发流程
+
+```
+git push → GitHub Actions 自动触发
+  ├── Build          npm ci → npm run build（webpack + 复制数据文件）
+  ├── Start Mock     node scripts/mock-server.js &（后台启动模拟交易所）
+  ├── k6 Run         docker run --network host ...（压测，输出 JSON）
+  └── Performance Gate
+        ├── P95(order) > 800ms?   → ❌ FAIL
+        ├── Error Rate > 10%?     → ❌ FAIL
+        └── summary.json 不存在?  → ❌ FAIL（k6 崩溃）
+```
+
+### 12.2 门禁参数
+
+| 参数 | 阈值 | 含义 |
+|------|------|------|
+| `order_latency_ms` P95 | < 800ms | 下单接口延迟 SLA |
+| `http_req_failed` rate | < 10% | HTTP 协议层错误率上限 |
+| `summary.json` 存在 | 必须 | k6 正常完成运行 |
+
+### 12.3 怎么验证门禁生效
+
+```bash
+# 临时把 CI 阈值从 800 改成 1（P95 必定 > 1ms）
+# → push → 看到 CI ❌ FAIL → 改回 800 → push → ✅ PASS
+```
+
+### 12.4 阻止劣化代码合入 main
+
+```
+GitHub 仓库 Settings → Branches → Add branch protection rule
+  Branch: main
+  ✅ Require status checks to pass before merging
+     → 勾选 "K6 Smoke Test"
+```
+
+加规则后，CI 红色 = 合并按钮变灰，必须修好才能合。
+
+### 12.5 CI Mock 服务
+
+项目中的 `scripts/mock-server.js` 是零依赖 mock 服务器，CI 中自动启动：
+
+```bash
+node scripts/mock-server.js &
+```
+
+支持的端点：
+
+| 方法 | 路径 | 响应 |
+|------|------|------|
+| GET | `/api/v1/health` | `{"status":"ok"}` |
+| GET | `/api/v1/ticker/:symbol` | 随机价格 |
+| POST | `/api/v1/order` | 95% 200 + 5% 500（模拟真实错误率） |
+
+### 12.6 CI 排坑记录
+
+| 问题 | 原因 | 修复 |
+|------|------|------|
+| k6 找不到 `symbols.json` | `npx webpack` 只编译 TS，不复制 JSON | 改用 `npm run build` |
+| k6 连不上 mock | Docker 容器内 `localhost` ≠ 宿主机 | `--network host` |
+| 输出文件写不进去 | 容器用户无宿主机目录写权限 | `mkdir k6-output && chmod 0777` |
+| k6-action 接收不到脚本 | 参数名是 `filename` 不是 `path` | 换 `filename` |
+| k6 内置 thresholds 阻断 CI | thresholds 不通过 → 退出码 99 → CI 停 | 移除内置 thresholds + `continue-on-error` |
+
+---
+
+## 13. 数据文件路径适配
+
+### 13.1 问题
+
+`open()` 是相对于 k6 脚本所在目录解析。不同环境脚本位置不同：
+
+| 环境 | 脚本位置 | open('./data/xx') 解析 |
+|------|----------|----------------------|
+| 本地 `k6 run dist/` | `dist/` | `dist/data/` ✅ |
+| Docker `COPY dist/ /app/` | `/app/` | `/app/data/` ✅ |
+| k6-operator ConfigMap 挂载 | `/test/` | `/test/data/` ❌ 不存在 |
+
+### 13.2 修复
+
+用 `DATA_PATH` 环境变量替代硬编码路径：
+
+```typescript
+// pre-signer.ts / symbols.ts
+const DATA_PATH = __ENV.DATA_PATH || './data';
+const orders = JSON.parse(open(`${DATA_PATH}/orders.json`));
+```
+
+| 环境 | DATA_PATH | open() 实际路径 |
+|------|-----------|----------------|
+| 本地/Docker | 不设（默认 `./data`） | 脚本目录 + `/data/` |
+| k6-operator | `/app/data`（镜像内置） | `/app/data/` ✅ |
+
+---
+
+## 14. 云原生部署排坑
+
+### 14.1 Dockerfile 排坑
+
+| 问题 | 修复 |
+|------|------|
+| 单阶段 `Dockerfile` 漏 `ENTRYPOINT` | 加 `ENTRYPOINT ["k6"]` |
+| 多阶段 `npx webpack` 漏数据复制 | 改为 `npx webpack && cp -r src/data dist/data` |
+| 镜像大小无差异 | 基镜像相同（`grafana/k6`），差异仅 128KB 数据文件 |
+| 多阶段真正价值 | 不依赖本地预构建，`docker build` 一条命令可复现 |
+
+### 14.2 k6-operator 排坑
+
+| 问题 | 修复 |
+|------|------|
+| ConfigMap 扁平无子目录 | 数据文件打进镜像 + `DATA_PATH` 环境变量 |
+| ConfigMap 更新不生效 | 删 TestRun 重建（不会自动重读） |
+| Pod Error 不一定异常 | k6 阈值超标会非 0 退出 → Pod Error（正常行为） |
+| parallelism 4 = 4 个 Pod | 修改 `parallelism: 4` + 删旧 TestRun 重建 |
+
+### 14.3 docker-compose 排坑
+
+| 问题 | 修复 |
+|------|------|
+| Grafana 13.x 连不上 InfluxDB 1.8 | 锁定 `grafana/grafana:11.5.2` |
+| Query Language 默认 Flux 报 404 | 手动选 InfluxQL |
+| 每次弹出登录框 | 加 `GF_AUTH_ANONYMOUS_ORG_ROLE: 'Admin'` |
+| macOS 容器访问宿主机 | `host.docker.internal` + `extra_hosts` |
+
+---
+
+## 15. 改动记录
+
+| 日期 | 改动 | 影响范围 |
+|------|------|---------|
+| 2026-07-04 | Dockerfile 修复（ENTRYPOINT + 路径） | Docker |
+| 2026-07-04 | docker-compose Grafana 版本锁定 + 匿名认证 | compose |
+| 2026-07-06 | `open()` 路径改用 `DATA_PATH` 环境变量 | pre-signer.ts, symbols.ts |
+| 2026-07-06 | k6-operator TestRun 配置自定义镜像 + env | k8s/ |
+| 2026-07-06 | Kubectl ConfigMap 更新流程文档化 | k8s/ |
+| 2026-07-07 | CI workflow: 构建 + mock + k6 + 门禁 + 防御 | .github/workflows/ |
+| 2026-07-07 | CI mock 服务 (`scripts/mock-server.js`) | scripts/ |
+| 2026-07-07 | 移除 k6 内置 thresholds，CI 门禁统一管理 | Mixed-scenario-v2.ts |
+| 2026-07-07 | CI 排坑：权限、网络、参数名 | workflow |
+| 2026-07-07 | 多阶段 Dockerfile 数据复制修复 | Dockerfile.multistage |
