@@ -17,8 +17,9 @@ jobs:
       - name: Build k6 script
         run: |
           npm ci
-          npx webpack
-          ls dist/mixed-scenario-v2.js   # 确认产物存在
+          npm run build                    # webpack + cp -r src/data dist/data
+          ls dist/mixed-scenario-v2.js    # 确认产物存在
+          ls dist/data/symbols.json       # 确认数据文件也已复制
 
       - name: Run k6 with summary
         uses: grafana/k6-action@v0.3.1
