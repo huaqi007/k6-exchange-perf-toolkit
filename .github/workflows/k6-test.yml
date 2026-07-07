@@ -23,6 +23,7 @@ jobs:
 
       - name: Run k6 with summary
         uses: grafana/k6-action@v0.3.1
+        continue-on-error: true            # k6 网络失败也不阻断，交给下一步门禁判断
         with:
           filename: ./dist/mixed-scenario-v2.js
           arguments: --out json=results.json --summary-export=summary.json
