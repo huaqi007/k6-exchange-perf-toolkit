@@ -1,7 +1,8 @@
 name: K6 Smoke Test
 on:
   push:
-    branches: [k6-ci-test]    # ← 先在测试分支触发
+    branches: [k6-ci-test]
+
 jobs:
   k6:
     runs-on: ubuntu-latest
@@ -14,7 +15,6 @@ jobs:
           node-version: '20'
 
       - name: Build k6 script
-        working-directory: ./k6-ts-project
         run: |
           npm ci
           npx webpack
@@ -23,4 +23,4 @@ jobs:
       - name: Run k6
         uses: grafana/k6-action@v0.3.1
         with:
-          path: ./k6-ts-project/dist/mixed-scenario-v2.js
+          path: ./dist/mixed-scenario-v2.js
