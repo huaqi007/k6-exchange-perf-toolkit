@@ -34,8 +34,9 @@ jobs:
           ERROR=$(jq '.metrics.http_req_failed.values.rate' summary.json)
           echo "P95(order) = ${P95}ms | HTTP Error Rate = ${ERROR}"
 
-          if (( $(echo "$P95 > 800" | bc -l) )); then
-            echo "❌ P95 ${P95}ms 超过 800ms 阈值 → FAIL"
+          # TODO: 验证完后改回 800
+          if (( $(echo "$P95 > 1" | bc -l) )); then
+            echo "❌ P95 ${P95}ms 超过 1ms 阈值 → FAIL"
             exit 1
           fi
           if (( $(echo "$ERROR > 0.1" | bc -l) )); then
