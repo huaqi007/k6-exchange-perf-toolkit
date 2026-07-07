@@ -20,7 +20,24 @@ jobs:
           npx webpack
           ls dist/mixed-scenario-v2.js   # 确认产物存在
 
-      - name: Run k6
+      - name: Run k6 with summary
         uses: grafana/k6-action@v0.3.1
         with:
           path: ./dist/mixed-scenario-v2.js
+          arguments: --out json=results.json --summary-export=summary.json
+      
+      - name: Performance Gate（性能门禁）
+        run: |
+          P95=$(jq '.metrics.order_latency_ms["p(95)"]' summary.json)
+          ERROR=$(jq '.metrics.http_req_failed.values.rate' summary.json)
+          echo "P95(order) = ${P95}ms | HTTP Error Rate = ${ERROR}"
+
+          if (( $(echo "$P95 > 800" | bc -l) )); then
+            echo "❌ P95 ${P95}ms 超过 800ms 阈值 → FAIL"
+            exit 1
+          fi
+          if (( $(echo "$ERROR > 0.1" | bc -l) )); then
+            echo "❌ Error Rate ${ERROR} 超过 10% → FAIL"
+            exit 1
+          fi
+          echo "✅ Performance Gate PASSED"
