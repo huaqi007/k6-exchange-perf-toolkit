@@ -5,6 +5,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  issues: write        # 允许 workflow 在 PR 下创建评论
+
 jobs:
   k6:
     runs-on: ubuntu-latest
@@ -55,8 +59,8 @@ jobs:
             exit 1
           fi
 
-          P95=$(jq '.metrics.order_latency_ms["p(95)"]' k6-output/summary.json)
-          ERROR=$(jq '.metrics.http_req_failed.values.rate' k6-output/summary.json)
+          P95=$(jq -r '.metrics.order_latency_ms["p(95)"] // 0' k6-output/summary.json)
+          ERROR=$(jq -r '.metrics.http_req_failed.values.rate // 0' k6-output/summary.json)
 
           # 写入 GITHUB_ENV，供 PR 评论步骤读取
           echo "P95=${P95}" >> $GITHUB_ENV
@@ -84,6 +88,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           header: k6-perf-report
           message: |
             ## 📊 K6 Performance Test Results
