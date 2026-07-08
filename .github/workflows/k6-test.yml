@@ -2,6 +2,8 @@ name: K6 Smoke Test
 on:
   push:
     branches: [k6-ci-test]
+  pull_request:
+    branches: [main]
 
 jobs:
   k6:
@@ -17,21 +19,20 @@ jobs:
       - name: Build k6 script
         run: |
           npm ci
-          npm run build                    # webpack + cp -r src/data dist/data
-          ls dist/mixed-scenario-v2.js    # 确认产物存在
-          ls dist/data/symbols.json       # 确认数据文件也已复制
+          npm run build
+          ls dist/mixed-scenario-v2.js
+          ls dist/data/symbols.json
 
       - name: Start mock server（后台运行）
         run: |
           node scripts/mock-server.js &
-          sleep 2                           # 等 mock 启动完毕
+          sleep 2
           curl -s http://localhost:8080/api/v1/health
           echo "Mock server ready"
 
       - name: Run k6 with summary
         continue-on-error: true
         run: |
-          # 创建独立输出目录，chmod 0777 解决容器写权限问题
           mkdir -p k6-output
           chmod 0777 k6-output
 
@@ -44,31 +45,50 @@ jobs:
             --out json=/output/results.json \
             --summary-export=/output/summary.json
 
-          echo "=== 输出文件 ==="
           ls -la k6-output/
 
       - name: Performance Gate（性能门禁）
+        id: gate
         run: |
-          # 防御：summary.json 不存在时给出清晰报错
           if [ ! -f k6-output/summary.json ]; then
-            echo "❌ k6-output/summary.json 未生成 — k6 未能正常完成压测"
-            if [ -f k6-output/results.json ]; then
-              echo "--- results.json 尾部 ---"
-              tail -c 2000 k6-output/results.json
-            fi
+            echo "❌ k6-output/summary.json 未生成"
             exit 1
           fi
 
           P95=$(jq '.metrics.order_latency_ms["p(95)"]' k6-output/summary.json)
           ERROR=$(jq '.metrics.http_req_failed.values.rate' k6-output/summary.json)
-          echo "P95(order) = ${P95}ms | HTTP Error Rate = ${ERROR}"
 
-          if (( $(echo "$P95 > 800" | bc -l) )); then
+          # 写入 GITHUB_ENV，供 PR 评论步骤读取
+          echo "P95=${P95}" >> $GITHUB_ENV
+          echo "ERROR=${ERROR}" >> $GITHUB_ENV
+
+          # 计算 ✅/❌
+          if (( $(echo "$P95 < 800" | bc -l) )); then P95_OK="✅"; else P95_OK="❌"; fi
+          if (( $(echo "$ERROR < 0.1" | bc -l) )); then ERR_OK="✅"; else ERR_OK="❌"; fi
+          echo "P95_OK=${P95_OK}" >> $GITHUB_ENV
+          echo "ERR_OK=${ERR_OK}" >> $GITHUB_ENV
+
+          echo "P95(order) = ${P95}ms ${P95_OK} | HTTP Error Rate = ${ERROR} ${ERR_OK}"
+
+          if [ "${P95_OK}" = "❌" ]; then
             echo "❌ P95 ${P95}ms 超过 800ms 阈值 → FAIL"
             exit 1
           fi
-          if (( $(echo "$ERROR > 0.1" | bc -l) )); then
+          if [ "${ERR_OK}" = "❌" ]; then
             echo "❌ Error Rate ${ERROR} 超过 10% → FAIL"
             exit 1
           fi
           echo "✅ Performance Gate PASSED"
+
+      - name: Post results to PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: k6-perf-report
+          message: |
+            ## 📊 K6 Performance Test Results
+            | 指标 | 实测值 | 阈值 | 结果 |
+            |------|--------|------|------|
+            | P95 延迟 | ${{ env.P95 }}ms | 800ms | ${{ env.P95_OK }} |
+            | 错误率 | ${{ env.ERROR }} | 10% | ${{ env.ERR_OK }} |
+            📊 [查看完整日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
