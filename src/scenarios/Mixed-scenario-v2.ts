@@ -46,7 +46,7 @@ export const options = {
       stages: [
         { target: 100, duration: '1m' },
         { target: 200, duration: '1m' },
-        { target: 200, duration: '1m' },
+        { target: 200, duration: '30s' },
       ],
       exec: 'placeOrder',
     },
