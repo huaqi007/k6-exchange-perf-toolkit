@@ -1,0 +1,46 @@
+name: K6 PR Comment
+# 独立 workflow，在 k6-test 完成后触发，有 issues:write 权限
+on:
+  workflow_run:
+    workflows: ["K6 Smoke Test"]
+    types:
+      - completed
+
+permissions:
+  issues: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'pull_request'
+    steps:
+      - name: Download k6 results
+        uses: actions/download-artifact@v4
+        with:
+          name: k6-perf-results
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Parse results
+        id: parse
+        run: |
+          # 从 artifact 读取 k6-test workflow 的输出
+          while IFS='=' read -r key value; do
+            echo "${key}=${value}" >> $GITHUB_ENV
+          done < gate-result.txt
+          # 重新加载到当前 shell 用于 echo
+          export $(cat gate-result.txt | xargs)
+          echo "Parsed: P95=${P95}ms ${P95_OK} | Error=${ERROR} ${ERR_OK}"
+
+      - name: Post PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          header: k6-perf-report
+          message: |
+            ## 📊 K6 Performance Test Results
+            | 指标 | 实测值 | 阈值 | 结果 |
+            |------|--------|------|------|
+            | P95 延迟 | ${{ env.P95 }}ms | 800ms | ${{ env.P95_OK }} |
+            | 错误率 | ${{ env.ERROR }} | 10% | ${{ env.ERR_OK }} |
+            📊 [查看完整日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }})

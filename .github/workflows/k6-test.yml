@@ -5,10 +5,6 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
-  issues: write        # 允许 workflow 在 PR 下创建评论
-
 jobs:
   k6:
     runs-on: ubuntu-latest
@@ -62,15 +58,20 @@ jobs:
           P95=$(jq -r '.metrics.order_latency_ms["p(95)"] // 0' k6-output/summary.json)
           ERROR=$(jq -r '.metrics.http_req_failed.values.rate // 0' k6-output/summary.json)
 
-          # 写入 GITHUB_ENV，供 PR 评论步骤读取
+          # 写入 GITHUB_ENV + 输出文件，供后续 PR 评论 workflow 使用
           echo "P95=${P95}" >> $GITHUB_ENV
           echo "ERROR=${ERROR}" >> $GITHUB_ENV
 
-          # 计算 ✅/❌
           if (( $(echo "$P95 < 800" | bc -l) )); then P95_OK="✅"; else P95_OK="❌"; fi
           if (( $(echo "$ERROR < 0.1" | bc -l) )); then ERR_OK="✅"; else ERR_OK="❌"; fi
           echo "P95_OK=${P95_OK}" >> $GITHUB_ENV
           echo "ERR_OK=${ERR_OK}" >> $GITHUB_ENV
+
+          # 保存结果到文件，供 artifact 上传
+          echo "P95=${P95}" > k6-output/gate-result.txt
+          echo "ERROR=${ERROR}" >> k6-output/gate-result.txt
+          echo "P95_OK=${P95_OK}" >> k6-output/gate-result.txt
+          echo "ERR_OK=${ERR_OK}" >> k6-output/gate-result.txt
 
           echo "P95(order) = ${P95}ms ${P95_OK} | HTTP Error Rate = ${ERROR} ${ERR_OK}"
 
@@ -84,16 +85,10 @@ jobs:
           fi
           echo "✅ Performance Gate PASSED"
 
-      - name: Post results to PR
+      - name: Upload results（供 PR 评论 workflow 读取）
         if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: actions/upload-artifact@v4
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          header: k6-perf-report
-          message: |
-            ## 📊 K6 Performance Test Results
-            | 指标 | 实测值 | 阈值 | 结果 |
-            |------|--------|------|------|
-            | P95 延迟 | ${{ env.P95 }}ms | 800ms | ${{ env.P95_OK }} |
-            | 错误率 | ${{ env.ERROR }} | 10% | ${{ env.ERR_OK }} |
-            📊 [查看完整日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          name: k6-perf-results
+          path: k6-output/gate-result.txt
+          retention-days: 1
