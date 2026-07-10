@@ -1,0 +1,84 @@
+version: '3.8'
+
+# ============================================================
+# docker-compose.yml — 一键启动全量压测环境
+#
+# 包含:
+#   - mock-server:  HTTP REST (8080) + WebSocket (8080/ws) + gRPC (9090) 靶机
+#   - k6-runner:    编译 TS 并运行所有压测场景
+#   - prometheus:   采集 k6 指标 (端口 9091)
+#   - grafana:      可视化面板 (端口 3000, admin/admin)
+#
+# 用法:
+#   docker compose up -d                    # 启动全栈
+#   docker compose run --rm k6-runner       # 仅运行压测
+#   docker compose logs -f mock-server      # 查看 mock 日志
+# ============================================================
+
+services:
+  mock-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.multistage
+      target: mock-server
+    container_name: k6-mock-server
+    ports:
+      - '8080:8080'
+      - '9090:9090'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8080/api/v1/health']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  k6-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.multistage
+      target: k6-runner
+    container_name: k6-runner
+    depends_on:
+      mock-server:
+        condition: service_healthy
+    environment:
+      - ENVIRONMENT=local
+      - K6_PROMETHEUS_RW_SERVER_URL=http://prometheus:9090/api/v1/write
+    volumes:
+      - ./results:/app/results
+    command: ['bash', 'scripts/run-all.sh']
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: k6-prometheus
+    ports:
+      - '9091:9090'
+    volumes:
+      - ./ci/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: k6-grafana
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - ./grafana/dashboard.json:/etc/grafana/provisioning/dashboards/k6.json:ro
+      - ./ci/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:

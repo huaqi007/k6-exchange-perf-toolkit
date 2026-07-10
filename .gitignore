@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Test results
+results/
+
+# Generated test data
+data/orders.json
+data/symbols.json
+
+# Environment / secrets
+.env
+.env.*
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

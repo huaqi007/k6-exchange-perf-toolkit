@@ -1,0 +1,132 @@
+# ============================================================
+# .github/workflows/perf-gate.yml — GitHub Actions 性能门禁
+#
+# 在 PR merge / push main 时自动:
+#   1. 构建 TypeScript
+#   2. 启动 mock 靶机
+#   3. 运行 k6 压测
+#   4. 检查性能阈值（thresholds）
+#   5. 将结果上传为 CI artifact
+#
+# 通过 k6 的 --out json 输出结果，结合 thresholds 自动判定通过/失败。
+# ============================================================
+
+name: Performance Gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'proto/**'
+  push:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+  K6_VERSION: '0.49.0'
+
+jobs:
+  perf-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Generate test data
+        run: COUNT=1000 node scripts/generate-txns.js
+
+      - name: Start mock services
+        run: |
+          npm run mock &
+          # Wait for mock to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/api/v1/health > /dev/null 2>&1; then
+              echo "Mock server ready"
+              break
+            fi
+            echo "Waiting for mock server... ($i/30)"
+            sleep 1
+          done
+
+      - name: Setup k6
+        run: |
+          curl -sSL "https://github.com/grafana/k6/releases/download/v${K6_VERSION}/k6-v${K6_VERSION}-linux-amd64.tar.gz" | tar xz
+          sudo mv "k6-v${K6_VERSION}-linux-amd64/k6" /usr/local/bin/
+          k6 version
+
+      - name: Prepare results dir
+        run: mkdir -p results
+
+      # 每个 k6 步骤都会因 threshold 失败而返回非 0 退出码，
+      # 使用 continue-on-error 收集所有场景结果，最终在 Check Thresholds 统一判定。
+      - name: Run HTTP Order Stress
+        id: order
+        run: k6 run --out json=results/order-stress.json dist/order-stress.js
+        continue-on-error: true
+
+      - name: Run gRPC Service Test
+        id: grpc
+        run: k6 run --out json=results/grpc-service.json dist/grpc-service.js
+        continue-on-error: true
+
+      - name: Run WebSocket Test
+        id: ws
+        run: k6 run --out json=results/market-data-ws.json dist/market-data-ws.js
+        continue-on-error: true
+
+      - name: Run E2E Full-chain Test
+        id: e2e
+        run: k6 run --out json=results/e2e-trading.json dist/e2e-trading.js
+        continue-on-error: true
+
+      - name: Check Thresholds
+        run: |
+          echo "## Performance Gate Results" >> "$GITHUB_STEP_SUMMARY"
+          gate_failed=0
+          for f in results/*.json; do
+            [ -f "$f" ] || continue
+            scenario=$(basename "$f" .json)
+            echo "### $scenario" >> "$GITHUB_STEP_SUMMARY"
+
+            # Extract pass/fail counts from k6 JSON output
+            checks_total=$(jq '[.[] | select(.type=="Point" and .metric=="checks") | .data.value] | add // 0' "$f")
+            checks_passed=$(jq '[.[] | select(.type=="Point" and .metric=="checks" and .data.tags?.result=="pass") | .data.value] | add // 0' "$f")
+            echo "- Checks: $checks_passed / $checks_total passed" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          # 任一 k6 步骤退出码非 0 即代表阈值未达标 → 门禁失败
+          for outcome in "${{ steps.order.outcome }}" "${{ steps.grpc.outcome }}" "${{ steps.ws.outcome }}" "${{ steps.e2e.outcome }}"; do
+            if [ "$outcome" != "success" ]; then
+              gate_failed=1
+            fi
+          done
+
+          if [ "$gate_failed" -ne 0 ]; then
+            echo "❌ Performance gate FAILED — one or more scenarios breached thresholds." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "✅ Performance gate PASSED." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: results/
+          retention-days: 30

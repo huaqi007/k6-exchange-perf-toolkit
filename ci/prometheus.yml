@@ -1,0 +1,15 @@
+# ci/prometheus.yml — Prometheus 抓取配置
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9091']
+
+  - job_name: 'k6'
+    static_configs:
+      # k6 --out prometheus=namespace=perf-testing 时通过 remote write 推送
+      # 此 target 仅作为 remote write receiver 的匹配
+      - targets: ['host.docker.internal:9091']

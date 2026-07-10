@@ -1,0 +1,61 @@
+# ============================================================
+# Dockerfile.multistage — 多阶段构建镜像
+#
+# Stage 1 (builder):    安装依赖 + 编译 TypeScript -> /app/dist
+# Stage 2 (mock-server): 仅运行 mock 靶机 (< 200MB)
+# Stage 3 (k6-runner):   k6 + 编译产物，可直接运行压测
+#
+# 构建:
+#   docker build --target mock-server -t k6-mock .
+#   docker build --target k6-runner  -t k6-perf  .
+# ============================================================
+
+# ---- Stage 1: Builder ----
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --production=false
+
+COPY tsconfig.json webpack.config.js ./
+COPY src/ ./src/
+COPY proto/ ./proto/
+COPY data/ ./data/
+
+RUN npm run build
+
+# ---- Stage 2: Mock Server (lightweight) ----
+FROM node:20-alpine AS mock-server
+
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --production
+
+COPY scripts/mock-server.js ./scripts/
+COPY proto/ ./proto/
+
+EXPOSE 8080 9090
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=5 \
+  CMD wget -qO- http://localhost:8080/api/v1/health || exit 1
+
+CMD ["node", "scripts/mock-server.js"]
+
+# ---- Stage 3: k6 Runner ----
+FROM grafana/k6:0.49.0 AS k6-runner
+
+USER root
+RUN apk add --no-cache nodejs npm bash curl
+
+WORKDIR /app
+COPY --from=builder /app/dist/ ./dist/
+COPY --from=builder /app/scripts/ ./scripts/
+COPY --from=builder /app/proto/ ./proto/
+COPY --from=builder /app/data/ ./data/
+COPY --from=builder /app/package.json ./
+
+# k6 运行配置
+ENV K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM=true
+
+ENTRYPOINT ["k6"]
+CMD ["run", "dist/e2e-trading.js"]

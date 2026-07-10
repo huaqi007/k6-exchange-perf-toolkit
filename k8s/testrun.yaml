@@ -1,0 +1,38 @@
+# k6-operator TestRun CRD — 分布式压测
+#
+# 使用 k6-operator 在 Kubernetes 集群中并行运行 k6 测试。
+# 部署前确保 k6-operator 已安装到集群:
+#   kubectl apply -f https://github.com/grafana/k6-operator/releases/latest/download/bundle.yaml
+#
+# 用法:
+#   kubectl apply -f k8s/testrun.yaml
+
+apiVersion: k6.io/v1alpha1
+kind: TestRun
+metadata:
+  name: k6-exchange-perf
+  namespace: perf-testing
+spec:
+  parallelism: 4                       # 4 个 pod 并行执行
+  parallelismThreshold: 100            # VU 超过 100 后自动扩展
+  script:
+    configMap:
+      name: k6-test-scripts
+      file: order-stress.js
+  arguments: |
+    --out prometheus=namespace=perf-testing
+    --tag environment=staging
+    --tag team=qa
+  argumentsAsConfigMap: true
+  runner:
+    image: grafana/k6:latest
+    env:
+      - name: ENVIRONMENT
+        value: staging
+    resources:
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+      requests:
+        cpu: "1"
+        memory: "1Gi"

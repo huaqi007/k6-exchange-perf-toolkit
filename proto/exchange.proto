@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package exchange;
+
+service OrderService {
+  rpc PlaceOrder (PlaceOrderRequest) returns (PlaceOrderResponse);
+  rpc SubscribeOrders (SubscribeOrdersRequest) returns (stream OrderUpdate);
+}
+
+message PlaceOrderRequest {
+  string symbol = 1;
+  string side = 2;
+  string type = 3;
+  double price = 4;
+  double quantity = 5;
+}
+
+message PlaceOrderResponse {
+  string order_id = 1;
+  string status = 2;
+  double filled_qty = 3;
+}
+
+message SubscribeOrdersRequest {
+  string symbol = 1;
+}
+
+message OrderUpdate {
+  string order_id = 1;
+  string symbol = 2;
+  string side = 3;
+  string type = 4;
+  double price = 5;
+  double quantity = 6;
+  string status = 7;
+  double filled_qty = 8;
+}
