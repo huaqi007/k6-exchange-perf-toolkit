@@ -63,8 +63,9 @@ parse_checks() {
     return
   fi
   local total passed failed
-  total=$(jq '[.[] | select(.type=="Point" and .metric=="checks") | .data.value] | add // 0' "$json")
-  passed=$(jq '[.[] | select(.type=="Point" and .metric=="checks" and .data.tags?.result=="pass") | .data.value] | add // 0' "$json")
+  # k6 --out json 产出 JSONL（每行一个 JSON 对象），-s (slurp) 合并为数组后处理
+  total=$(jq -s 'map(select(.type=="Point" and .metric=="checks") | .data.value) | add // 0' "$json")
+  passed=$(jq -s 'map(select(.type=="Point" and .metric=="checks" and .data.tags.result=="pass") | .data.value) | add // 0' "$json")
   failed=$((total - passed))
   echo "${passed}/${failed}"
 }

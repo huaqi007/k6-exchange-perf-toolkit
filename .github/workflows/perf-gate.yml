@@ -104,9 +104,10 @@ jobs:
             scenario=$(basename "$f" .json)
             echo "### $scenario" >> "$GITHUB_STEP_SUMMARY"
 
-            # Extract pass/fail counts from k6 JSON output
-            checks_total=$(jq '[.[] | select(.type=="Point" and .metric=="checks") | .data.value] | add // 0' "$f")
-            checks_passed=$(jq '[.[] | select(.type=="Point" and .metric=="checks" and .data.tags?.result=="pass") | .data.value] | add // 0' "$f")
+            # k6 --out json 产出 JSONL（每行一个 JSON 对象），非 JSON 数组。
+            # -s (slurp) 将所有行合并为一个数组再处理，兼容两种格式。
+            checks_total=$(jq -s 'map(select(.type=="Point" and .metric=="checks") | .data.value) | add // 0' "$f")
+            checks_passed=$(jq -s 'map(select(.type=="Point" and .metric=="checks" and .data.tags.result=="pass") | .data.value) | add // 0' "$f")
             echo "- Checks: $checks_passed / $checks_total passed" >> "$GITHUB_STEP_SUMMARY"
           done
 
