@@ -63,9 +63,11 @@ parse_checks() {
     return
   fi
   local total passed failed
-  # k6 --out json 产出 JSONL（每行一个 JSON 对象），-s (slurp) 合并为数组后处理
-  total=$(jq -s 'map(select(.type=="Point" and .metric=="checks") | .data.value) | add // 0' "$json")
-  passed=$(jq -s 'map(select(.type=="Point" and .metric=="checks" and .data.tags.result=="pass") | .data.value) | add // 0' "$json")
+  # k6 --out json 产出 JSONL（每行一个 JSON 对象）。
+  # 大场景 JSON 条目可达 20 万+，不可用 jq -s slurp → OOM。
+  # 流式处理：每行独立 select，awk 累加。
+  total=$(jq -r 'select(.type=="Point" and .metric=="checks") | .data.value' "$json" | awk '{s+=$1} END {print s+0}')
+  passed=$(jq -r 'select(.type=="Point" and .metric=="checks" and .data.tags.result=="pass") | .data.value' "$json" | awk '{s+=$1} END {print s+0}')
   failed=$((total - passed))
   echo "${passed}/${failed}"
 }

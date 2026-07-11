@@ -18,6 +18,9 @@ data/symbols.json
 # Logs
 *.log
 
+# Audit report (local only)
+bug.md
+
 # OS / editor
 .DS_Store
 .idea/
