@@ -1,17 +1,17 @@
 # ============================================================
-# .github/workflows/perf-gate.yml — GitHub Actions 性能门禁
+# .github/workflows/perf-gate.yml — CI 集成验证
 #
-# 在 PR merge / push main 时自动:
-#   1. 构建 TypeScript
+# Push / PR 到 main 时自动:
+#   1. 编译 TypeScript
 #   2. 启动 mock 靶机
-#   3. 运行 k6 压测
-#   4. 检查性能阈值（thresholds）
-#   5. 将结果上传为 CI artifact
+#   3. 运行全部 k6 场景（关闭阈值判定，仅验证脚本可运行）
+#   4. 汇总 checks 统计并上传 JSON 结果 artifact
 #
-# 通过 k6 的 --out json 输出结果，结合 thresholds 自动判定通过/失败。
+# 注意：这不是性能门禁。mock 靶机内置随机延迟和 5% 错误，
+# 阈值结果仅供参考，不作为 CI 通过/失败判定依据。
 # ============================================================
 
-name: Performance Gate
+name: CI Smoke Test
 
 on:
   pull_request:
@@ -28,7 +28,7 @@ env:
   K6_VERSION: '0.49.0'
 
 jobs:
-  perf-gate:
+  smoke-test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -54,7 +54,6 @@ jobs:
       - name: Start mock services
         run: |
           npm run mock &
-          # Wait for mock to be ready
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8080/api/v1/health > /dev/null 2>&1; then
               echo "Mock server ready"
@@ -73,57 +72,34 @@ jobs:
       - name: Prepare results dir
         run: mkdir -p results
 
-      # 每个 k6 步骤都会因 threshold 失败而返回非 0 退出码，
-      # 使用 continue-on-error 收集所有场景结果，最终在 Check Thresholds 统一判定。
+      # --no-thresholds 关闭 k6 内置阈值判定，因为 mock 靶机会故意注入 5% 500 错误，
+      # 阈值 breach 不应阻塞 CI。checks 结果仍会写入 JSON 供报告参考。
       - name: Run HTTP Order Stress
-        id: order
-        run: k6 run --out json=results/order-stress.json dist/order-stress.js
-        continue-on-error: true
+        run: k6 run --no-thresholds --out json=results/order-stress.json dist/order-stress.js
 
       - name: Run gRPC Service Test
-        id: grpc
-        run: k6 run --out json=results/grpc-service.json dist/grpc-service.js
-        continue-on-error: true
+        run: k6 run --no-thresholds --out json=results/grpc-service.json dist/grpc-service.js
 
       - name: Run WebSocket Test
-        id: ws
-        run: k6 run --out json=results/market-data-ws.json dist/market-data-ws.js
-        continue-on-error: true
+        run: k6 run --no-thresholds --out json=results/market-data-ws.json dist/market-data-ws.js
 
       - name: Run E2E Full-chain Test
-        id: e2e
-        run: k6 run --out json=results/e2e-trading.json dist/e2e-trading.js
-        continue-on-error: true
+        run: k6 run --no-thresholds --out json=results/e2e-trading.json dist/e2e-trading.js
 
-      - name: Check Thresholds
+      - name: Summary
+        if: always()
         run: |
-          echo "## Performance Gate Results" >> "$GITHUB_STEP_SUMMARY"
-          gate_failed=0
+          echo "## CI Smoke Test Results" >> "$GITHUB_STEP_SUMMARY"
           for f in results/*.json; do
             [ -f "$f" ] || continue
             scenario=$(basename "$f" .json)
             echo "### $scenario" >> "$GITHUB_STEP_SUMMARY"
 
-            # k6 --out json 产出 JSONL（每行一个 JSON 对象），非 JSON 数组。
-            # 大场景（e2e-trading）JSON 条目可达 20 万+，不可用 jq -s 全量 slurp → OOM。
-            # 改为流式：每行独立 select，awk 累加，零内存压力。
-            checks_total=$(jq -r 'select(.type=="Point" and .metric=="checks") | .data.value' "$f" | awk '{s+=$1} END {print s+0}')
-            checks_passed=$(jq -r 'select(.type=="Point" and .metric=="checks" and .data.tags.result=="pass") | .data.value' "$f" | awk '{s+=$1} END {print s+0}')
-            echo "- Checks: $checks_passed / $checks_total passed" >> "$GITHUB_STEP_SUMMARY"
+            total=$(jq -r 'select(.type=="Point" and .metric=="checks") | .data.value' "$f" | awk '{s+=$1} END {print s+0}')
+            passed=$(jq -r 'select(.type=="Point" and .metric=="checks" and .data.tags.result=="pass") | .data.value' "$f" | awk '{s+=$1} END {print s+0}')
+            echo "- Checks: $passed / $total passed" >> "$GITHUB_STEP_SUMMARY"
           done
-
-          # 任一 k6 步骤退出码非 0 即代表阈值未达标 → 门禁失败
-          for outcome in "${{ steps.order.outcome }}" "${{ steps.grpc.outcome }}" "${{ steps.ws.outcome }}" "${{ steps.e2e.outcome }}"; do
-            if [ "$outcome" != "success" ]; then
-              gate_failed=1
-            fi
-          done
-
-          if [ "$gate_failed" -ne 0 ]; then
-            echo "❌ Performance gate FAILED — one or more scenarios breached thresholds." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "✅ Performance gate PASSED." >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ All scenarios executed. See artifact for full JSON results." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Results
         if: always()
